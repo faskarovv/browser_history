@@ -20,6 +20,7 @@ BrowserHistory *historyInit(const char *homepage, int capacity) {
     free(bh);
     return NULL;
   }
+  // filling up the initial node
   strncpy(node->url, homepage, MAX_URL_LENGTH - 1);
   node->url[MAX_URL_LENGTH - 1] = '\0';
 
@@ -27,6 +28,7 @@ BrowserHistory *historyInit(const char *homepage, int capacity) {
   node->prev = NULL;
   node->next = NULL;
 
+  // linking the browserHistory to the inital node
   bh->head = node;
   bh->tail = node;
   bh->current = node;
@@ -40,7 +42,7 @@ int visit(BrowserHistory *bh, const char *url) {
   if (bh == NULL || url == NULL) {
     return -1;
   }
-
+  // new page
   Node *newNode = malloc(sizeof(Node));
   if (newNode == NULL) {
     return -1;
@@ -62,19 +64,20 @@ int visit(BrowserHistory *bh, const char *url) {
 
   bh->current->next = NULL;
   bh->tail = bh->current;
-
+  // fill up the new node
   strncpy(newNode->url, url, MAX_URL_LENGTH - 1);
-
   newNode->url[MAX_URL_LENGTH - 1] = '\0';
   newNode->visitedAt = time(NULL);
   newNode->prev = bh->current;
   newNode->next = NULL;
-
+  // link it with the browser history
   bh->current->next = newNode;
   bh->tail = newNode;
   bh->current = newNode;
   bh->size++;
 
+  // if the capacity is over the given value we delete the node that head
+  // pointed to
   if (bh->size > bh->capacity) {
     Node *old = bh->head;
     bh->head = old->next;
@@ -90,7 +93,7 @@ const char *historyBack(BrowserHistory *bh, int steps) {
   if (bh == NULL) {
     return NULL;
   }
-
+  // simple traversal back with two conditions
   while (steps > 0 && bh->current->prev != NULL) {
     bh->current = bh->current->prev;
     steps--;
@@ -103,7 +106,7 @@ const char *historyForward(BrowserHistory *bh, int steps) {
   if (bh == NULL) {
     return NULL;
   }
-
+  // simple traversal again but forward
   while (steps > 0 && bh->current->next != NULL) {
     bh->current = bh->current->next;
     steps--;
@@ -124,13 +127,14 @@ void historyFree(BrowserHistory *bh) {
   if (bh == NULL) {
     return;
   }
-
+  // we save the p->next cause p is gonna be gone after free(p)
+  // and just traverse till the end which is when p == NULL
   Node *p = bh->head;
   while (p != NULL) {
     Node *nextNode = p->next;
     free(p);
     p = nextNode;
   }
-
+  // free browser history itself
   free(bh);
 }
