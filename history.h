@@ -15,6 +15,15 @@ struct Node {
   Node *next;
 };
 
+// deleted pages stack, position is where the page was so restore puts it back
+typedef struct DeletedPage DeletedPage;
+
+struct DeletedPage {
+  Node *node;
+  int position;
+  DeletedPage *below;
+};
+
 // head and tail give O(1) access for deleting and adding pages
 typedef struct BrowserHistory {
   Node *head;    // oldest page
@@ -22,7 +31,7 @@ typedef struct BrowserHistory {
   Node *current; // current page
   int size;      // number of nodes in the list
   int capacity;  // set limit for the available pages in history
-  // TODO stack of deleted nodes
+  DeletedPage *deletedTop; // top of the stack of deleted pages
 } BrowserHistory;
 
 // Farid
@@ -32,5 +41,13 @@ const char *historyBack(BrowserHistory *bh, int steps);
 const char *historyForward(BrowserHistory *bh, int steps);
 const Node *currentPage(const BrowserHistory *bh);
 void historyFree(BrowserHistory *bh);
+
+// Toghrul
+void displayHistory(const BrowserHistory *bh);
+void deleteHistory(BrowserHistory *bh);
+int deleteUrl(BrowserHistory *bh, const char *url);
+const char *restoreUrl(BrowserHistory *bh);
+int exportHistory(const BrowserHistory *bh, const char *filename);
+int importHistory(BrowserHistory *bh, const char *filename);
 
 #endif // HISTORY_H
