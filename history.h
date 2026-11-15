@@ -15,13 +15,12 @@ struct Node {
   Node *next;
 };
 
-// element of the deleted pages stack
-// we also keep the position the page had so restore can put it back there
+// deleted pages stack, position is where the page was so restore puts it back
 typedef struct DeletedPage DeletedPage;
 
 struct DeletedPage {
   Node *node;
-  int position; // index in the list when it got deleted (head is 0)
+  int position;
   DeletedPage *below;
 };
 
@@ -33,7 +32,6 @@ typedef struct BrowserHistory {
   int size;      // number of nodes in the list
   int capacity;  // set limit for the available pages in history
   DeletedPage *deletedTop; // top of the stack of deleted pages
-  int deletedCount;
 } BrowserHistory;
 
 // Farid

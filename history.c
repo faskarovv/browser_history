@@ -5,8 +5,15 @@
 
 #include "history.h"
 
-static void freeNodes(Node *p);
-static void clearDeleted(BrowserHistory *bh);
+// frees every page left in the deleted stack
+static void clearDeleted(BrowserHistory *bh) {
+  while (bh->deletedTop != NULL) {
+    DeletedPage *top = bh->deletedTop;
+    bh->deletedTop = top->below;
+    free(top->node);
+    free(top);
+  }
+}
 
 BrowserHistory *historyInit(const char *homepage, int capacity) {
   if (homepage == NULL || capacity <= 0) {
@@ -38,7 +45,6 @@ BrowserHistory *historyInit(const char *homepage, int capacity) {
   bh->size = 1;
   bh->capacity = capacity;
   bh->deletedTop = NULL;
-  bh->deletedCount = 0;
 
   return bh;
 }
@@ -146,45 +152,15 @@ void historyFree(BrowserHistory *bh) {
   free(bh);
 }
 
-// frees every node starting from p till the end of the chain
-static void freeNodes(Node *p) {
-  while (p != NULL) {
-    Node *nextNode = p->next;
-    free(p);
-    p = nextNode;
-  }
-}
-
-// empties the deleted pages stack, frees both the stack element and the node
-static void clearDeleted(BrowserHistory *bh) {
-  while (bh->deletedTop != NULL) {
-    DeletedPage *top = bh->deletedTop;
-    bh->deletedTop = top->below;
-    free(top->node);
-    free(top);
-  }
-  bh->deletedCount = 0;
-}
-
 void displayHistory(const BrowserHistory *bh) {
   if (bh == NULL) {
     return;
   }
 
-  printf("History (%d/%d pages):\n", bh->size, bh->capacity);
-
-  int i = 1;
   for (Node *p = bh->head; p != NULL; p = p->next) {
-    char timeStr[32];
-    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S",
-             localtime(&p->visitedAt));
-
-    printf("%3d. %s  (%s)", i, p->url, timeStr);
-    if (p == bh->current) {
-      printf("  [<]");
-    }
-    printf("\n");
-    i++;
+    char timeStr[20];
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M", localtime(&p->visitedAt));
+    printf("%s  %s %s\n", timeStr, p->url, p == bh->current ? "[<]" : "");
   }
 }
 
@@ -192,250 +168,125 @@ void deleteHistory(BrowserHistory *bh) {
   if (bh == NULL) {
     return;
   }
-  // the browser always has to show some page, so we keep the current one
-  // and remove everything before and after it
-  // A<->B<->[C]<->D  becomes just [C]
-  Node *cur = bh->current;
-
-  if (cur->prev != NULL) {
-    cur->prev->next = NULL; // cut the left part off so freeNodes stops there
-    freeNodes(bh->head);
+  // free everything except the current page, browser has to show something
+  Node *p = bh->head;
+  while (p != NULL) {
+    Node *nextNode = p->next;
+    if (p != bh->current) {
+      free(p);
+    }
+    p = nextNode;
   }
-  freeNodes(cur->next);
 
-  cur->prev = NULL;
-  cur->next = NULL;
-  bh->head = cur;
-  bh->tail = cur;
+  bh->current->prev = NULL;
+  bh->current->next = NULL;
+  bh->head = bh->current;
+  bh->tail = bh->current;
   bh->size = 1;
-
-  // whole history is wiped so there is nothing to restore either
   clearDeleted(bh);
 }
 
 int deleteUrl(BrowserHistory *bh, const char *url) {
-  if (bh == NULL || url == NULL) {
-    return -1;
-  }
-  // we dont let the user delete the only page left
-  if (bh->size == 1) {
+  // the only page left cant be deleted
+  if (bh == NULL || url == NULL || bh->size == 1) {
     return -1;
   }
 
-  // find the first node with this url, counting the position as we go
   Node *p = bh->head;
   int pos = 0;
   while (p != NULL && strcmp(p->url, url) != 0) {
     p = p->next;
     pos++;
   }
-  if (p == NULL) {
-    return -1; // not in history
-  }
-
-  DeletedPage *dp = malloc(sizeof(DeletedPage));
+  DeletedPage *dp = (p != NULL) ? malloc(sizeof(DeletedPage)) : NULL;
   if (dp == NULL) {
     return -1;
   }
 
-  // if we are deleting the page we are on, current moves one back
-  // (or one forward if it was the oldest page)
+  // if we delete the page we are on, step back (or forward if it was the head)
   if (p == bh->current) {
     bh->current = (p->prev != NULL) ? p->prev : p->next;
   }
 
-  // unlink p, head and tail have to be fixed if p was at one of the ends
-  if (p->prev != NULL) {
-    p->prev->next = p->next;
-  } else {
-    bh->head = p->next;
-  }
-  if (p->next != NULL) {
-    p->next->prev = p->prev;
-  } else {
-    bh->tail = p->prev;
-  }
-  p->prev = NULL;
-  p->next = NULL;
+  // unlink p, fixing head/tail if it was at one of the ends
+  if (p->prev != NULL) p->prev->next = p->next; else bh->head = p->next;
+  if (p->next != NULL) p->next->prev = p->prev; else bh->tail = p->prev;
   bh->size--;
 
-  // push onto the stack, node is not freed so we can bring it back later
+  // push onto the stack, the node is kept so restore can reuse it
   dp->node = p;
   dp->position = pos;
   dp->below = bh->deletedTop;
   bh->deletedTop = dp;
-  bh->deletedCount++;
-
   return 0;
 }
 
 const char *restoreUrl(BrowserHistory *bh) {
-  if (bh == NULL || bh->deletedTop == NULL) {
-    return NULL;
-  }
-  // restoring would go over the limit, user has to delete something first
-  if (bh->size >= bh->capacity) {
+  if (bh == NULL || bh->deletedTop == NULL || bh->size >= bh->capacity) {
     return NULL;
   }
 
-  // pop the last deleted page
+  // pop
   DeletedPage *top = bh->deletedTop;
-  bh->deletedTop = top->below;
-  bh->deletedCount--;
-
   Node *node = top->node;
   int pos = top->position;
+  bh->deletedTop = top->below;
   free(top);
 
-  // list could be shorter now than when the page was deleted,
-  // in that case it just goes to the end
-  if (pos > bh->size) {
-    pos = bh->size;
+  // find the node that should come after it, if the list got shorter
+  // we just reach NULL and the page goes to the end
+  Node *after = bh->head;
+  for (int i = 0; i < pos && after != NULL; i++) {
+    after = after->next;
   }
 
-  if (pos == 0) {
-    // goes in front of the head
-    node->prev = NULL;
-    node->next = bh->head;
-    bh->head->prev = node;
-    bh->head = node;
-  } else {
-    // walk to the node that will be right before it
-    Node *before = bh->head;
-    for (int i = 0; i < pos - 1; i++) {
-      before = before->next;
-    }
-    node->prev = before;
-    node->next = before->next;
-    if (before->next != NULL) {
-      before->next->prev = node;
-    } else {
-      bh->tail = node;
-    }
-    before->next = node;
-  }
+  node->next = after;
+  node->prev = (after != NULL) ? after->prev : bh->tail;
+  if (node->prev != NULL) node->prev->next = node; else bh->head = node;
+  if (after != NULL) after->prev = node; else bh->tail = node;
   bh->size++;
 
   return node->url;
 }
 
-// file format:
-// first line is the index of the current page,
-// then one page per line as "<timestamp> <url>" from oldest to newest
+// one page per line: "<timestamp> <url>", oldest first
 int exportHistory(const BrowserHistory *bh, const char *filename) {
-  if (bh == NULL || filename == NULL) {
-    return -1;
-  }
-
-  FILE *f = fopen(filename, "w");
+  FILE *f = (bh != NULL && filename != NULL) ? fopen(filename, "w") : NULL;
   if (f == NULL) {
     return -1;
   }
-
-  int currentIndex = 0;
-  for (Node *p = bh->head; p != bh->current; p = p->next) {
-    currentIndex++;
-  }
-  fprintf(f, "%d\n", currentIndex);
 
   for (Node *p = bh->head; p != NULL; p = p->next) {
     fprintf(f, "%lld %s\n", (long long)p->visitedAt, p->url);
   }
-
   fclose(f);
   return 0;
 }
 
+// replaces the history with the file, last page in the file becomes current
+// visit() already handles the capacity so we just reuse it
 int importHistory(BrowserHistory *bh, const char *filename) {
-  if (bh == NULL || filename == NULL) {
-    return -1;
-  }
-
-  FILE *f = fopen(filename, "r");
+  FILE *f = (bh != NULL && filename != NULL) ? fopen(filename, "r") : NULL;
   if (f == NULL) {
     return -1;
   }
 
-  char line[MAX_URL_LENGTH + 64];
-  int currentIndex;
-  if (fgets(line, sizeof(line), f) == NULL ||
-      sscanf(line, "%d", &currentIndex) != 1) {
+  long long t;
+  char url[MAX_URL_LENGTH];
+  // 255 = MAX_URL_LENGTH - 1
+  if (fscanf(f, "%lld %255s", &t, url) != 2) {
     fclose(f);
     return -1;
   }
+  // first page goes into the one node deleteHistory leaves behind
+  deleteHistory(bh);
+  strcpy(bh->current->url, url);
+  bh->current->visitedAt = t;
 
-  // build the new list separately first, so if the file turns out to be
-  // empty or broken the old history is still there
-  Node *newHead = NULL;
-  Node *newTail = NULL;
-  int count = 0;
-
-  while (fgets(line, sizeof(line), f) != NULL) {
-    line[strcspn(line, "\r\n")] = '\0';
-
-    long long timestamp;
-    int urlStart = 0;
-    // %n gives us where the url begins after the timestamp and the space
-    if (sscanf(line, "%lld %n", &timestamp, &urlStart) != 1 ||
-        line[urlStart] == '\0') {
-      continue; // skip lines that dont look right
-    }
-
-    Node *node = malloc(sizeof(Node));
-    if (node == NULL) {
-      freeNodes(newHead);
-      fclose(f);
-      return -1;
-    }
-    strncpy(node->url, line + urlStart, MAX_URL_LENGTH - 1);
-    node->url[MAX_URL_LENGTH - 1] = '\0';
-    node->visitedAt = (time_t)timestamp;
-    node->prev = newTail;
-    node->next = NULL;
-
-    if (newTail != NULL) {
-      newTail->next = node;
-    } else {
-      newHead = node;
-    }
-    newTail = node;
-    count++;
-
-    // same rule as visit(), if the file has more pages than we can hold
-    // the oldest ones get dropped
-    if (count > bh->capacity) {
-      Node *old = newHead;
-      newHead = old->next;
-      newHead->prev = NULL;
-      free(old);
-      count--;
-      currentIndex--;
-    }
+  while (fscanf(f, "%lld %255s", &t, url) == 2) {
+    visit(bh, url);
+    bh->current->visitedAt = t;
   }
   fclose(f);
-
-  if (count == 0) {
-    return -1;
-  }
-
-  if (currentIndex < 0) {
-    currentIndex = 0;
-  }
-  if (currentIndex >= count) {
-    currentIndex = count - 1;
-  }
-
-  // now its safe to throw away the old history
-  freeNodes(bh->head);
-  clearDeleted(bh);
-
-  bh->head = newHead;
-  bh->tail = newTail;
-  bh->size = count;
-  bh->current = newHead;
-  for (int i = 0; i < currentIndex; i++) {
-    bh->current = bh->current->next;
-  }
-
   return 0;
 }
